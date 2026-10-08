@@ -112,13 +112,11 @@ test("usage, subscription group: day, week and month", async () => {
     assert.ok(Math.abs(w.used - (100 * used) / limit) < 1e-9)
     assert.match(w.display, /^\$\d+\.\d\d \/ \$\d+\.\d\d$/)
   }
-  assert.equal(week.resetsAt, plus(s.weekly_window_start, 7 * DAY))
-  // sub2api tells the day's and the month's starts only from the version
-  // that has them; until then those have no reset time
-  if (s.daily_window_start) assert.equal(day.resetsAt, plus(s.daily_window_start, DAY))
-  else assert.equal(day.resetsAt, undefined)
-  if (s.monthly_window_start) assert.equal(month.resetsAt, plus(s.monthly_window_start, 30 * DAY))
-  else assert.equal(month.resetsAt, undefined)
+  // a reset time only where sub2api tells it (*_reset_at, not on current
+  // upstream images); the week falls back to its start + 7 days
+  assert.equal(week.resetsAt, s.weekly_reset_at ?? plus(s.weekly_window_start, 7 * DAY))
+  assert.equal(day.resetsAt, s.daily_reset_at ?? undefined)
+  assert.equal(month.resetsAt, s.monthly_reset_at ?? undefined)
   assert.equal(iso(week.resetsAt), week.resetsAt)
 })
 
