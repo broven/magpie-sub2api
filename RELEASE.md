@@ -8,10 +8,11 @@
    SUB2API_URL=https://api.example.com SUB2API_KEY=sk-... ./e2e.sh
    ```
    Check that:
-   - `plugin list` / `quota` names the account `host …last4`;
+   - `plugin list` / `quota` names each account `SUB2API_NAME` if set, else `host …last4` (the first `quota` may still say `API key …last4`: the name is written on first use);
+   - `plugin list` shows the site's own provider as `e2e-site (E2E site, …)`, and no other `Sub2apiSite` slot left behind;
    - `quota --json` shows the windows, plan and expiry the README's table promises;
-   - `models` lists the group's models;
-   - `provider test sub2api` gets an answer.
+   - `models` lists the group's models under both `sub2api/` and `e2e-site/`;
+   - `provider test sub2api` and `provider test e2e-site` both get an answer.
 3. Bump `version` in `package.json` and commit.
 4. Tag it and push the tag: `git tag v0.1.0 && git push origin v0.1.0`. The tag must be `v` + the package's version.
 5. `publish.yml` runs the e2e matrix and then `npm publish --provenance --access public` over OIDC. Check the package page on npm for the provenance badge.
