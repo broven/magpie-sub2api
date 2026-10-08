@@ -1,6 +1,6 @@
 {
   "name": "magpie-sub2api",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "magpie provider plugin for any sub2api site: the key's models, and its subscription, quota or balance as magpie usage",
   "type": "module",
   "main": "./index.mjs",
@@ -22,5 +22,16 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "magpie": {
+    "options": {
+      "sites": [
+        {
+          "id": "my-site",
+          "name": "My sub2api",
+          "url": "https://api.example.com"
+        }
+      ]
+    }
   }
 }
