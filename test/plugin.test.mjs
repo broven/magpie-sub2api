@@ -8,7 +8,8 @@ import assert from "node:assert/strict"
 import { readFileSync, mkdirSync, writeFileSync } from "node:fs"
 import { join, dirname } from "node:path"
 import { fileURLToPath } from "node:url"
-import { Sub2apiPlugin } from "../index.mjs"
+import * as plugin from "../index.mjs"
+const { Sub2apiPlugin } = plugin
 
 const here = dirname(fileURLToPath(import.meta.url))
 const state = JSON.parse(readFileSync(process.env.STATE ?? join(here, ".state", "state.json"), "utf8"))
@@ -158,3 +159,74 @@ test("usage, a key the site refuses: signed out", async () => {
   assert.match(usage.error, /^401 /)
   assert.deepEqual(usage.windows, [])
 })
+
+test("a sign-in's own name names the account", async () => {
+  const c = fakeClient()
+  const h = await Sub2apiPlugin({ client: c })
+  assert.deepEqual(h.auth.methods[0].prompts.map((p) => p.key), ["baseURL", "name"])
+  const auth = { ...signIn(state.keys.subscription), metadata: { baseURL: state.base, name: "  my jmds  " } }
+  const usage = await h.auth.usage(async () => auth, { id: "sub2api" })
+  assert.equal(usage.user, "my jmds")
+  assert.equal(c.sets[0].body.accountId, "my jmds")
+  // an empty name: the site's host and the key's end
+  const blank = { ...signIn(state.keys.balance), metadata: { baseURL: state.base, name: "" } }
+  assert.equal((await h.auth.usage(async () => blank, {})).user, `${host} …${state.keys.balance.slice(-4)}`)
+})
+
+test("options.sites: each site its own named provider, in the order listed", async () => {
+  const exported = Object.entries(plugin)
+  // every export is a plugin magpie calls: no helper may be exported
+  for (const [name, fn] of exported) assert.equal(typeof fn, "function", name)
+  const options = {
+    sites: [
+      { id: "mine", name: "My site", url: state.base + "/v1/" },
+      { id: "Not An Id", url: state.base },
+      { url: "ftp://nowhere" },
+      { id: "sub2api", url: state.base },
+      { url: state.base.replace("127.0.0.1", "localhost") },
+    ],
+  }
+  const c = fakeClient()
+  const all = await Promise.all(exported.map(([, fn]) => fn({ client: c }, options)))
+  const ids = all.map((h) => h.auth?.provider)
+  assert.deepEqual(ids.filter(Boolean), ["sub2api", "mine", slugLocal()])
+  assert.equal(ids.length, 9, "the pooled provider and 8 site slots")
+  for (const h of all.filter((h) => !h.auth)) assert.deepEqual(h, {}, "an empty slot is no provider")
+  // no options: only the pooled provider
+  const bare = await Promise.all(exported.map(([, fn]) => fn({ client: c }, undefined)))
+  assert.deepEqual(bare.map((h) => h.auth?.provider).filter(Boolean), ["sub2api"])
+
+  const mine = all.find((h) => h.auth?.provider === "mine")
+  // the name it was given, unless the user's config already names it
+  const cfg = { provider: {} }
+  for (const h of all) h.config?.(cfg)
+  assert.equal(cfg.provider.mine.name, "My site")
+  assert.equal(cfg.provider[slugLocal()].name, slugLocal())
+  const named = { provider: { mine: { name: "Hand-named" } } }
+  mine.config(named)
+  assert.equal(named.provider.mine.name, "Hand-named")
+
+  // the key alone: the address is the site's, asked of no one
+  assert.deepEqual(mine.auth.methods[0].prompts.map((p) => p.key), ["name"])
+  assert.equal(mine.auth.methods[0].label, "My site API key")
+  const auth = { type: "api", key: state.keys.subscription, metadata: { name: "work" } }
+  assert.deepEqual(await mine.auth.loader(async () => auth, {}), { baseURL: state.base + "/v1", apiKey: state.keys.subscription })
+  const set = c.sets.find((r) => r.path.id === "mine")
+  assert.equal(set.body.accountId, "work")
+  const usage = await mine.auth.usage(async () => auth, {})
+  assert.equal(usage.user, "work")
+  assert.equal(usage.error, undefined)
+  assert.equal(usage.plan, state.groups.subscription)
+  assert.equal(usage.windows.length, 3)
+  const models = await mine.provider.models({ id: "mine", models: {} }, { auth })
+  assert.ok(Object.keys(models).length > 0)
+  for (const m of Object.values(models)) {
+    assert.equal(m.providerID, "mine")
+    assert.equal(m.api.url, state.base + "/v1")
+  }
+  writeFileSync(join(out, "sites.json"), JSON.stringify({ tag, ids, config: cfg, usage, models: Object.keys(models) }, null, 2) + "\n")
+})
+
+function slugLocal() {
+  return new URL(state.base.replace("127.0.0.1", "localhost")).hostname.replace(/[^a-z0-9]+/g, "-")
+}

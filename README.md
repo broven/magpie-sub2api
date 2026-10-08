@@ -34,13 +34,34 @@ magpie plugin add magpie-sub2api
 magpie plugin login sub2api
 ```
 
-先问站点地址（如 `https://api.example.com`，带不带 `/v1` 都可以），再问 API key（`sk-…`）。在应用里添加 sub2api 账号时填同样两项。
+依次问站点地址（如 `https://api.example.com`，带不带 `/v1` 都可以）、账号名（可留空），最后问 API key（`sk-…`）。在应用里添加 sub2api 账号时填同样几项。
 
-登录后账号显示为「站点域名 …key 后四位」，比如 `api.example.com …a1b2`。名字是插件在账号第一次被使用时写进去的。
+账号名填了就用它（如 `工作 key`）；留空则显示为「站点域名 …key 后四位」，比如 `api.example.com …a1b2`。名字是插件在账号第一次被使用时写进去的，所以刚登录完的第一次用量读取里可能还是 `API key …a1b2`。magpie 按账号名记各账号的模型和能力，**登录后别改名**，要改就删掉重新登录。
 
-## 多站点、多 key 池化
+## 多站点：池化，还是每个站点一个 provider
 
-每次登录是一个账号，各自带着自己的站点地址和 key。不同站点的 key、同一站点的多个 key 都挂在同一个 provider `sub2api` 下，组成一个池，magpie 按各账号的用量在池内路由。再加一个就是再登录一次。
+**池化（默认）**：每次登录是一个账号，各自带着自己的站点地址和 key。不同站点的 key、同一站点的多个 key 都挂在同一个 provider `sub2api` 下，组成一个池，magpie 按各账号的用量在池内路由。再加一个就是再登录一次。模型统一叫 `sub2api/<模型>`，没法指定「这个请求走哪个站」。
+
+**每个站点一个 provider**：在插件选项里列出站点，每个站点成为一个独立、有自己名字的 provider，模型叫 `<id>/<模型>`，可以在分组、路由里单独引用、排先后：
+
+```sh
+magpie plugin options magpie-sub2api '{"sites":[
+  {"id":"jmds","name":"JMDS 主站","url":"https://api.jmds.dev"},
+  {"id":"backup","name":"备用站","url":"https://api.example.com"}
+]}'
+magpie plugin login jmds      # 只问账号名和 key，站点地址取自选项
+magpie plugin login backup
+```
+
+应用里在插件的选项编辑器里填同样的 JSON。改完 magpie 会重新加载插件。
+
+- `url` 必填；`id` 可省，省了取站点域名（如 `api-example-com`）；`name` 可省，省了用 `id`。
+- `id` 只能是小写字母、数字、`-`、`_`，最长 40，不能重复，也不能是 `sub2api`（留给池化 provider）。不合规的站点会被跳过，并在 magpie 日志里说明原因。
+- 最多 8 个站点。
+- 每个站点 provider 下同样可以登录多个 key，在站点内池化。
+- 池化 provider `sub2api` 一直都在，两种用法可以并存。
+- 显示名只在你没给这个 provider 配过 `name` 时生效；`magpie.json` 里手写的名字优先。
+- **别改已用站点的 `id`**：账号是记在 `id` 下的，改了等于换一个新 provider，要重新登录。
 
 ## 用量模式
 

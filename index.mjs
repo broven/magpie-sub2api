@@ -6,14 +6,23 @@
 // balance), as the gateway's GET /v1/usage has it.
 //
 // Only upstream sub2api's public endpoints are asked (/v1/models,
-// /v1/usage), so any sub2api site from 0.2.14 on works. Each sign-in is one
-// account: its own site and its own key, so keys on several sites (or several
-// keys on one) pool under the one provider, and magpie routes across them.
+// /v1/usage), so any sub2api site from 0.2.14 on works. Two ways to have
+// sites, both at once if you like:
+//   - the "sub2api" provider: each sign-in is one account, its own site and
+//     its own key, so keys on several sites (or several keys on one) pool
+//     under the one provider, and magpie routes across them;
+//   - the plugin's options, {"sites": [{"id", "name", "url"}, …]}: each
+//     site is a provider of its own, named as you like, that groups and
+//     fallbacks can name (id/model); its sign-ins are keys on that site.
+// magpie fixes a plugin's providers when it loads it (one per exported
+// function), so there are SLOTS site providers to fill, in the order the
+// sites are listed.
 //
 // Every function this module exports is called as a plugin by magpie, so
-// only the plugin is exported.
+// only the plugins are exported.
 
 const ID = "sub2api"
+const SLOTS = 8
 const CHAT = "@ai-sdk/openai-compatible"
 const MESSAGES = "@ai-sdk/anthropic"
 const RESPONSES = "@ai-sdk/openai"
@@ -48,10 +57,13 @@ function hostOf(base) {
   }
 }
 
-// label is how magpie names the account: the site's host and the end of
-// the key, so keys on different sites (or two on one site) tell apart.
-function label(auth) {
-  const base = root(auth?.metadata?.baseURL)
+// label is how magpie names the account: the name given at sign-in, else
+// the site's host and the end of the key, so keys on different sites (or
+// two on one site) tell apart. magpie keys an account's own settings (its
+// models, its share) by this name, so it stays as it was given.
+function label(auth, base) {
+  const given = typeof auth?.metadata?.name === "string" ? auth.metadata.name.trim().slice(0, 60) : ""
+  if (given) return given
   const key = typeof auth?.key === "string" ? auth.key : ""
   const tail = key.length >= 8 ? " …" + key.slice(-4) : ""
   return base ? hostOf(base) + tail : ""
@@ -62,11 +74,11 @@ function label(auth) {
 // only {type, key, metadata} and hands a method's authorize no key, so the
 // name is written the first time the account is used, in its own scope
 // (client.auth.set replaces the account's sign-in, so it is kept whole).
-async function named(client, auth) {
-  const name = label(auth)
+async function named(client, id, auth, base) {
+  const name = label(auth, base)
   if (!name || auth.accountId === name || typeof client?.auth?.set !== "function") return
   try {
-    await client.auth.set({ path: { id: ID }, body: { ...auth, accountId: name } })
+    await client.auth.set({ path: { id }, body: { ...auth, accountId: name } })
   } catch {}
 }
 
@@ -103,12 +115,12 @@ function npmOf(id) {
   return CHAT
 }
 
-function runtimeModel(m, url) {
+function runtimeModel(m, url, providerID) {
   const npm = npmOf(m.id)
   const reasoning = npm !== CHAT || /think|reason/i.test(m.id)
   return {
     id: m.id,
-    providerID: ID,
+    providerID,
     name: m.name,
     api: { id: m.id, url, npm },
     status: "active",
@@ -132,14 +144,13 @@ function runtimeModel(m, url) {
 
 // models is what GET /v1/models lists for the key: its group's, in
 // Anthropic's shape or OpenAI's as the group's platform has it.
-async function models(auth) {
-  const base = root(auth.metadata?.baseURL)
+async function models(id, base, auth) {
   const body = await get(base, "/v1/models", auth.key)
   const out = {}
   for (const m of body?.data ?? []) {
     if (typeof m?.id !== "string" || !m.id) continue
     const name = typeof m.display_name === "string" && m.display_name ? m.display_name : m.id
-    out[m.id] = runtimeModel({ id: m.id, name }, base + "/v1")
+    out[m.id] = runtimeModel({ id: m.id, name }, base + "/v1", id)
   }
   if (!Object.keys(out).length) throw new Error("/v1/models: an empty list")
   return out
@@ -219,12 +230,11 @@ function fromUsage(u) {
   return { plan, error: "No active subscription for this key's group", windows: [] }
 }
 
-async function usage(client, auth) {
+async function usage(client, id, auth, base) {
   if (auth?.type !== "api" || !auth.key) return { error: "not signed in" }
-  const base = root(auth.metadata?.baseURL)
   if (!base) return { error: "No sub2api address saved with this key; sign in again" }
-  await named(client, auth)
-  const user = label(auth)
+  await named(client, id, auth, base)
+  const user = label(auth, base)
   try {
     return { user, ...fromUsage(await get(base, "/v1/usage", auth.key)) }
   } catch (e) {
@@ -232,19 +242,87 @@ async function usage(client, auth) {
   }
 }
 
+// ---- the sites in the plugin's options -----------------------------------------
+
+const ID_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/
+
+// slug is an id made from a site's host: api.example.com → api-example-com.
+function slug(base) {
+  return hostOf(base).toLowerCase().replace(/:\d+$/, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40)
+}
+
+// sites are the options' sites that can be providers, at most SLOTS: each
+// with an address, an id (given, else the host's) no other has, and a name
+// (given, else the id). The rest are left out, and told on stderr when
+// tell (once, by the first slot).
+function sitesOf(options, tell) {
+  const list = Array.isArray(options?.sites) ? options.sites : []
+  const out = []
+  const seen = new Set([ID])
+  for (const [i, s] of list.entries()) {
+    const why = (m) => tell && console.error(`magpie-sub2api: options.sites[${i}] left out: ${m}`)
+    const bad = checkURL(s?.url)
+    if (bad) {
+      why(bad)
+      continue
+    }
+    const base = root(s.url)
+    const id = typeof s.id === "string" && s.id.trim() ? s.id.trim() : slug(base)
+    if (!ID_RE.test(id)) {
+      why(`id "${id}": lower-case letters, digits, - and _, at most 40`)
+      continue
+    }
+    if (seen.has(id)) {
+      why(`id "${id}" is taken`)
+      continue
+    }
+    if (out.length === SLOTS) {
+      why(`only ${SLOTS} sites can be providers`)
+      continue
+    }
+    seen.add(id)
+    const name = typeof s.name === "string" && s.name.trim() ? s.name.trim() : id
+    out.push({ id, name, base })
+  }
+  return out
+}
+
 // ---- the plugin ---------------------------------------------------------------
 
-export async function Sub2apiPlugin({ client } = {}) {
+const NAME_PROMPT = {
+  type: "text",
+  key: "name",
+  message: "Account name (optional; empty for the site's host and the key's end)",
+  placeholder: "",
+}
+
+// hooks are one provider's: id, with its site fixed (a site from the
+// options) or each account's own (the "sub2api" provider's, asked at
+// sign-in).
+function hooks(client, id, site) {
+  const baseOf = (auth) => site?.base ?? root(auth?.metadata?.baseURL)
+  const prompts = site
+    ? [NAME_PROMPT]
+    : [
+        {
+          type: "text",
+          key: "baseURL",
+          message: "sub2api address",
+          placeholder: "https://api.example.com",
+          validate: checkURL,
+        },
+        NAME_PROMPT,
+      ]
   return {
     auth: {
-      provider: ID,
+      provider: id,
       // each account's own site: the loader runs once per account
       async loader(getAuth) {
         const auth = await getAuth()
         if (auth?.type !== "api" || !auth.key) return {}
-        const base = root(auth.metadata?.baseURL)
+        const base = baseOf(auth)
         if (!base) return {}
-        await named(client, auth)
+        await named(client, id, auth, base)
         // Bearer for chat and responses, x-api-key for messages: the
         // gateway takes either
         return { baseURL: base + "/v1", apiKey: auth.key }
@@ -252,36 +330,62 @@ export async function Sub2apiPlugin({ client } = {}) {
       methods: [
         {
           type: "api",
-          label: "sub2api API key",
+          label: site ? `${site.name} API key` : "sub2api API key",
           placeholder: "sk-…",
-          prompts: [
-            {
-              type: "text",
-              key: "baseURL",
-              message: "sub2api address",
-              placeholder: "https://api.example.com",
-              validate: checkURL,
-            },
-          ],
+          prompts,
         },
       ],
       // magpie's: the plan and how much of it is used
       async usage(getAuth) {
-        return usage(client, await getAuth())
+        const auth = await getAuth()
+        return usage(client, id, auth, baseOf(auth))
       },
     },
-    // the key's group's list, asked of the site the key was saved with
+    // the key's group's list, asked of the account's site
     provider: {
-      id: ID,
+      id,
       async models(provider, { auth } = {}) {
         if (auth?.type !== "api" || !auth.key) return provider.models
+        const base = baseOf(auth)
+        if (!base) return provider.models
         try {
-          return await models(auth)
+          return await models(id, base, auth)
         } catch (e) {
           if (e?.signIn) throw e
           return provider.models
         }
       },
     },
+    // a site's provider is shown by the name it was given (one the user's
+    // own config gives stays)
+    ...(site
+      ? {
+          config(cfg) {
+            cfg.provider ??= {}
+            const was = cfg.provider[id] ?? {}
+            cfg.provider[id] = { ...was, name: was.name ?? site.name }
+          },
+        }
+      : {}),
   }
 }
+
+export async function Sub2apiPlugin({ client } = {}) {
+  return hooks(client, ID)
+}
+
+// slot(i) is the provider of the options' i-th site; nothing while there
+// is none.
+const slot = (i) => async ({ client } = {}, options) => {
+  const site = sitesOf(options, i === 0)[i]
+  return site ? hooks(client, site.id, site) : {}
+}
+
+export const Sub2apiSite1 = slot(0)
+export const Sub2apiSite2 = slot(1)
+export const Sub2apiSite3 = slot(2)
+export const Sub2apiSite4 = slot(3)
+export const Sub2apiSite5 = slot(4)
+export const Sub2apiSite6 = slot(5)
+export const Sub2apiSite7 = slot(6)
+export const Sub2apiSite8 = slot(7)

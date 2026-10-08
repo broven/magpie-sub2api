@@ -34,13 +34,34 @@ magpie plugin add magpie-sub2api
 magpie plugin login sub2api
 ```
 
-It asks for the site's address first (e.g. `https://api.example.com`, with or without `/v1`), then for the API key (`sk-…`). In the app, adding a sub2api account asks for the same two.
+It asks for the site's address (e.g. `https://api.example.com`, with or without `/v1`), then for a name for the account (optional), then for the API key (`sk-…`). In the app, adding a sub2api account asks for the same.
 
-The account shows as the site's host plus the key's last four characters, e.g. `api.example.com …a1b2`. The plugin writes this name the first time the account is used.
+The account goes by the name given (e.g. `work key`); left empty, it shows as the site's host plus the key's last four characters, e.g. `api.example.com …a1b2`. The plugin writes the name the first time the account is used, so the very first usage reading after signing in may still say `API key …a1b2`. magpie keeps each account's models and capabilities under its name: **don't rename an account once signed in**; to change it, remove it and sign in again.
 
-## Several sites, several keys, one pool
+## Several sites: one pool, or a provider per site
 
-Each sign-in is one account, with its own site and its own key. Keys on different sites, and several keys on one site, all sit under the one provider `sub2api` as a pool, and magpie routes across them by each account's usage. To add another, sign in again.
+**One pool (the default)**: each sign-in is one account, with its own site and its own key. Keys on different sites, and several keys on one site, all sit under the one provider `sub2api` as a pool, and magpie routes across them by each account's usage. To add another, sign in again. Its models are all `sub2api/<model>`; there is no saying which site a request goes to.
+
+**A provider per site**: list the sites in the plugin's options, and each becomes a provider of its own, with its own name, its models `<id>/<model>`, which groups and routes can name and order on their own:
+
+```sh
+magpie plugin options magpie-sub2api '{"sites":[
+  {"id":"jmds","name":"JMDS","url":"https://api.jmds.dev"},
+  {"id":"backup","name":"Backup","url":"https://api.example.com"}
+]}'
+magpie plugin login jmds      # asks only the account's name and the key; the address is the site's
+magpie plugin login backup
+```
+
+In the app, put the same JSON in the plugin's options editor. magpie reloads the plugin once they change.
+
+- `url` is required; `id` defaults to the site's host (e.g. `api-example-com`); `name` defaults to the `id`.
+- An `id` is lowercase letters, digits, `-` and `_`, at most 40, each its own, and not `sub2api` (the pool's). A site that breaks these is left out, and magpie's log says why.
+- At most 8 sites.
+- A site's provider takes several keys too, pooled within the site.
+- The pool provider `sub2api` stays either way; the two can be used side by side.
+- The name is only used when you haven't named that provider yourself; a `name` written in `magpie.json` wins.
+- **Don't change the `id` of a site in use**: its accounts are kept under the `id`, so a new one is a new provider to sign in to again.
 
 ## Usage modes
 
