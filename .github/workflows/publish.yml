@@ -1,0 +1,35 @@
+name: publish
+
+# A v* tag publishes to npm with trusted publishing (OIDC, no token) once the
+# end-to-end tests pass. See RELEASE.md for the first publish, which has to
+# be done by hand.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+      # trusted publishing needs node >= 22.14 and npm >= 11.5.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@^11.5.1
+      - name: the tag is the package's version
+        run: |
+          v="$(node -p "require('./package.json').version")"
+          test "v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, package.json $v"; exit 1; }
+      - run: npm publish --provenance --access public

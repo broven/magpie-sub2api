@@ -1,0 +1,26 @@
+{
+  "name": "magpie-plugin-sub2api",
+  "version": "0.1.0",
+  "description": "magpie provider plugin for any sub2api site: the key's models, and its subscription, quota or balance as magpie usage",
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": "./index.mjs",
+  "files": ["index.mjs", "README.md", "README.en.md", "LICENSE"],
+  "scripts": {
+    "test": "./test/run.sh"
+  },
+  "keywords": ["opencode", "opencode-plugin", "magpie", "magpie-plugin", "sub2api", "provider"],
+  "author": "Randy (broven)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/broven/magpie-plugin-sub2api.git"
+  },
+  "homepage": "https://github.com/broven/magpie-plugin-sub2api#readme",
+  "bugs": {
+    "url": "https://github.com/broven/magpie-plugin-sub2api/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    tags: ["v*"]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: e2e (sub2api ${{ matrix.sub2api }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # the oldest supported, and the newest release
+        sub2api: ["0.2.14", "latest"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: the module loads
+        run: node -e "import('./index.mjs').then(m => { if (typeof m.Sub2apiPlugin !== 'function') process.exit(1) })"
+      - name: end to end against a real sub2api
+        env:
+          SUB2API_IMAGE_TAG: ${{ matrix.sub2api }}
+        run: npm test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-sub2api-${{ matrix.sub2api }}
+          path: test/artifacts/${{ matrix.sub2api }}/
+          if-no-files-found: warn

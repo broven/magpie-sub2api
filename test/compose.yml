@@ -1,0 +1,52 @@
+# A throwaway upstream sub2api for the plugin's E2E test: sub2api, its
+# Postgres and Redis, and a fake Anthropic upstream (fake_upstream.py) that
+# answers every request with a fixed, large token usage so each key's usage
+# moves. Nothing is persisted (no named volumes); run.sh brings it up under
+# a unique project name and always tears it down with `down -v`.
+services:
+  sub2api:
+    image: weishaw/sub2api:${SUB2API_IMAGE_TAG:-0.2.14}
+    ports: ["127.0.0.1::8080"]
+    environment:
+      AUTO_SETUP: "true"
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: "8080"
+      SERVER_MODE: release
+      DATABASE_HOST: postgres
+      DATABASE_PORT: "5432"
+      DATABASE_USER: sub2api
+      DATABASE_PASSWORD: pgpass123
+      DATABASE_DBNAME: sub2api
+      DATABASE_SSLMODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      ADMIN_EMAIL: admin@example.com
+      ADMIN_PASSWORD: AdminPass123!
+      JWT_SECRET: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      TOTP_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      TZ: UTC
+      # the API key auth cache (15 s in memory, 300 s in Redis by default)
+      # holds a key's quota.used; short TTLs let /v1/usage show a request
+      # within seconds
+      API_KEY_AUTH_CACHE_L1_TTL_SECONDS: "1"
+      API_KEY_AUTH_CACHE_L2_TTL_SECONDS: "1"
+      SUBSCRIPTION_CACHE_L1_TTL_SECONDS: "1"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      fakeup: {condition: service_started}
+    restart: "no"
+  postgres:
+    image: postgres:18-alpine
+    environment: {POSTGRES_USER: sub2api, POSTGRES_PASSWORD: pgpass123, POSTGRES_DB: sub2api}
+    healthcheck: {test: ["CMD-SHELL", "pg_isready -U sub2api -d sub2api"], interval: 2s, timeout: 3s, retries: 30}
+    restart: "no"
+  redis:
+    image: redis:8-alpine
+    healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 2s, timeout: 3s, retries: 30}
+    restart: "no"
+  fakeup:
+    image: python:3.12-alpine
+    command: ["python", "-u", "/srv/fake_upstream.py"]
+    volumes: ["./fake_upstream.py:/srv/fake_upstream.py:ro"]
+    restart: "no"
