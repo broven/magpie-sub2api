@@ -2,7 +2,7 @@
 
 <!-- banner -->
 
-# magpie-plugin-sub2api
+# magpie-sub2api
 
 Any [sub2api](https://github.com/Wei-Shaw/sub2api) site as a provider in [magpie](https://usemagpie.ai). Sign in with the site's address and an API key. magpie can then use the models of the key's group and route by how much of the key is left.
 
@@ -20,12 +20,12 @@ Neither reaches routing, so magpie keeps sending to a key that is used up. This 
 
 ## Install
 
-In the magpie app, go to **Plugins › Discover**, search for `sub2api` and install `magpie-plugin-sub2api`.
+In the magpie app, go to **Plugins › Discover**, search for `sub2api` and install `magpie-sub2api`.
 
 Or from the command line:
 
 ```sh
-magpie plugin add magpie-plugin-sub2api
+magpie plugin add magpie-sub2api
 ```
 
 ## Sign in

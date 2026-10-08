@@ -2,7 +2,7 @@
 
 <!-- banner -->
 
-# magpie-plugin-sub2api
+# magpie-sub2api
 
 把任意一个 [sub2api](https://github.com/Wei-Shaw/sub2api) 站点接成 [magpie](https://usemagpie.ai) 的 provider：填站点地址和 API key 登录，magpie 就能用这个 key 所在分组的模型，并按 key 的剩余额度做路由。
 
@@ -20,12 +20,12 @@ magpie 给自定义 provider 配 `balance=/v1/usage` 时，只解析响应里的
 
 ## 安装
 
-在 magpie 应用里：**插件 › Discover**，搜索 `sub2api`，安装 `magpie-plugin-sub2api`。
+在 magpie 应用里：**插件 › Discover**，搜索 `sub2api`，安装 `magpie-sub2api`。
 
 或者用命令行：
 
 ```sh
-magpie plugin add magpie-plugin-sub2api
+magpie plugin add magpie-sub2api
 ```
 
 ## 登录

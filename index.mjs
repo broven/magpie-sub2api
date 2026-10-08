@@ -1,4 +1,4 @@
-// magpie-plugin-sub2api: any sub2api site (github.com/Wei-Shaw/sub2api) as a
+// magpie-sub2api: any sub2api site (github.com/Wei-Shaw/sub2api) as a
 // magpie provider. Sign in with the site's address and an API key; the
 // models the key's group serves are spoken to on the site's own endpoints,
 // and auth.usage tells magpie what the key has left (its subscription's day,
