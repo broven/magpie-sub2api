@@ -2,7 +2,7 @@
 
 <!-- banner -->
 
-# magpie-plugin-sub2api
+# magpie-sub2api
 
 Any [sub2api](https://github.com/Wei-Shaw/sub2api) site as a provider in [magpie](https://usemagpie.ai). Sign in with the site's address and an API key. magpie can then use the models of the key's group and route by how much of the key is left.
 
@@ -20,12 +20,12 @@ Neither reaches routing, so magpie keeps sending to a key that is used up. This 
 
 ## Install
 
-In the magpie app, go to **Plugins › Discover**, search for `sub2api` and install `magpie-plugin-sub2api`.
+In the magpie app, go to **Plugins › Discover**, search for `sub2api` and install `magpie-sub2api`.
 
 Or from the command line:
 
 ```sh
-magpie plugin add magpie-plugin-sub2api
+magpie plugin add magpie-sub2api
 ```
 
 ## Sign in
@@ -48,7 +48,7 @@ Each sign-in is one account, with its own site and its own key. Keys on differen
 
 | On sub2api | Shown in magpie | Windows | Reset times |
 |---|---|---|---|
-| **Subscription group** (the group sets day / week / month limits) | plan = the group's name; expiry = the subscription's | `24 hours` / `7 days` / `30 days`, only those the group limits (an empty or 0 limit is left out) | week: its start + 7 days. Day and month: only when sub2api returns `daily_window_start` / `monthly_window_start` (+24 h / +30 days) |
+| **Subscription group** (the group sets day / week / month limits) | plan = the group's name; expiry = the subscription's | `24 hours` / `7 days` / `30 days`, only those the group limits (an empty or 0 limit is left out) | the `daily_reset_at` / `weekly_reset_at` / `monthly_reset_at` sub2api returns; without them the week is its start + 7 days, and the day and month have none |
 | **Key with its own quota or rate limits** (`mode: quota_limited`) | plan `API key limits`; expiry = the key's | `Key quota` (the total) + `5 hours` / `24 hours` / `7 days` (the rate limits) | rate limits: the `reset_at` sub2api returns. The quota doesn't reset |
 | **Balance group** | the plan and the wallet's balance | none | none |
 
@@ -57,7 +57,7 @@ An expired subscription, a used-up key quota or an expired key shows as an error
 ## Limitations
 
 - **Balance mode isn't routed on**: a balance has no time window, so magpie only shows it and won't steer away from a key whose wallet is running low.
-- **No countdown for the day and month windows**: current upstream sub2api (0.2.14) returns only when the week started, so the day and month windows have a length but no reset time. The plugin picks up `daily_window_start` / `monthly_window_start` as soon as upstream returns them.
+- **No countdown for the day and month windows**: current upstream sub2api (0.2.14) returns no reset times, so the day and month windows have a length only. The day resets at the next midnight in the server's time zone, and the day and month windows roll over only when next used, so the client can't work the reset out from a window's start, and the plugin doesn't guess. Returning `daily_reset_at` / `monthly_reset_at` is proposed in an upstream PR (pending); once a site runs a sub2api version that returns them, the day and month countdowns appear.
 - A key sees only the subscription of the group it is bound to. A subscription to another group on the same user needs its own sign-in with a key bound to that group.
 - Signing in again with the same key adds a second account; remove the extra one.
 

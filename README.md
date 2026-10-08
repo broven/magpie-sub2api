@@ -2,7 +2,7 @@
 
 <!-- banner -->
 
-# magpie-plugin-sub2api
+# magpie-sub2api
 
 把任意一个 [sub2api](https://github.com/Wei-Shaw/sub2api) 站点接成 [magpie](https://usemagpie.ai) 的 provider：填站点地址和 API key 登录，magpie 就能用这个 key 所在分组的模型，并按 key 的剩余额度做路由。
 
@@ -20,12 +20,12 @@ magpie 给自定义 provider 配 `balance=/v1/usage` 时，只解析响应里的
 
 ## 安装
 
-在 magpie 应用里：**插件 › Discover**，搜索 `sub2api`，安装 `magpie-plugin-sub2api`。
+在 magpie 应用里：**插件 › Discover**，搜索 `sub2api`，安装 `magpie-sub2api`。
 
 或者用命令行：
 
 ```sh
-magpie plugin add magpie-plugin-sub2api
+magpie plugin add magpie-sub2api
 ```
 
 ## 登录
@@ -48,7 +48,7 @@ magpie plugin login sub2api
 
 | sub2api 的情况 | magpie 里看到的 | 窗口 | 重置时间 |
 |---|---|---|---|
-| **订阅分组**（group 设了日 / 周 / 月额度） | 套餐名 = 分组名，到期时间 = 订阅到期 | `24 hours` / `7 days` / `30 days`，只列分组设了额度的（额度为空或 0 的不列） | 周：本周窗口开始 + 7 天；日、月：sub2api 返回 `daily_window_start` / `monthly_window_start` 时才有（+24 小时 / +30 天） |
+| **订阅分组**（group 设了日 / 周 / 月额度） | 套餐名 = 分组名，到期时间 = 订阅到期 | `24 hours` / `7 days` / `30 days`，只列分组设了额度的（额度为空或 0 的不列） | 用 sub2api 返回的 `daily_reset_at` / `weekly_reset_at` / `monthly_reset_at`；没返回时周 = 本周窗口开始 + 7 天，日、月没有重置时间 |
 | **key 自带额度或限速**（`mode: quota_limited`） | 套餐名 `API key limits`，到期时间 = key 到期 | `Key quota`（总额度）+ `5 hours` / `24 hours` / `7 days`（限速） | 限速窗口用 sub2api 返回的 `reset_at`；总额度不重置 |
 | **余额分组** | 套餐名 + 钱包余额 | 无 | 无 |
 
@@ -57,7 +57,7 @@ magpie plugin login sub2api
 ## 限制
 
 - **余额模式不参与路由**：余额没有时间窗口，magpie 只显示余额，不会因为余额快用完而绕开这个 key。
-- **日、月窗口没有倒计时**：当前上游 sub2api（0.2.14）只返回周窗口的开始时间，日、月两个窗口只有长度没有重置时间。上游以后返回 `daily_window_start` / `monthly_window_start` 时，插件会自动用上。
+- **日、月窗口没有倒计时**：当前上游 sub2api（0.2.14）不返回重置时间，日、月两个窗口只有长度。日窗口在服务器时区的下一个零点重置、日和月窗口又是用到时才滚动，客户端从窗口开始时间推算不出来，所以插件不猜。返回 `daily_reset_at` / `monthly_reset_at` 的提案已提交上游 PR（待合并），站点跑上带这些字段的 sub2api 版本后，日、月倒计时就会出现。
 - 一个 key 只看得到它所绑定分组的订阅。同一用户在别的分组的订阅，要用绑定那个分组的 key 再登录一个账号。
 - 同一个 key 重复登录会多出一个账号，删掉多余的即可。
 

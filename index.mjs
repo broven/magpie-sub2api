@@ -1,4 +1,4 @@
-// magpie-plugin-sub2api: any sub2api site (github.com/Wei-Shaw/sub2api) as a
+// magpie-sub2api: any sub2api site (github.com/Wei-Shaw/sub2api) as a
 // magpie provider. Sign in with the site's address and an API key; the
 // models the key's group serves are spoken to on the site's own endpoints,
 // and auth.usage tells magpie what the key has left (its subscription's day,
@@ -187,19 +187,20 @@ function fromUsage(u) {
   const s = u?.subscription
   if (s && typeof s === "object") {
     const out = { plan, windows: [] }
-    // Upstream (0.2.14) tells only when the week started. The day's and
-    // the month's starts are read when a sub2api tells them
-    // (daily_window_start / monthly_window_start), and until then those
-    // two windows have a span but no reset time. Upstream's own reset times
-    // are: the week, its start + 7 days; the month, its start + 30 days (a
-    // rolling 30-day window, not a calendar month); the day, the next
-    // midnight in the server's time zone, which the client can't know, so
-    // start + 24 hours stands for it (the start is that midnight once the
-    // window has rolled over at least once).
+    // A window's reset time is the one sub2api tells (daily_reset_at /
+    // weekly_reset_at / monthly_reset_at, RFC 3339; being added upstream,
+    // absent on 0.2.14). It isn't worked out from the window starts: the
+    // day resets at the next midnight in the server's time zone, and the
+    // day's and the month's windows roll over only when next used, so a
+    // start + 24 hours or + 30 days would be a wrong guess. Without a told
+    // reset time the day and the month have a span but no reset time. The
+    // week is a rolling 7 days from its start upstream, so its start
+    // + 7 days stands in until weekly_reset_at is told.
+    const told = (v) => (typeof v === "string" && Number.isFinite(Date.parse(v)) ? v : undefined)
     const rows = [
-      ["24 hours", s.daily_usage_usd, s.daily_limit_usd, DAY, after(s.daily_window_start, DAY)],
-      ["7 days", s.weekly_usage_usd, s.weekly_limit_usd, 7 * DAY, after(s.weekly_window_start, 7 * DAY)],
-      ["30 days", s.monthly_usage_usd, s.monthly_limit_usd, 30 * DAY, after(s.monthly_window_start, 30 * DAY)],
+      ["24 hours", s.daily_usage_usd, s.daily_limit_usd, DAY, told(s.daily_reset_at)],
+      ["7 days", s.weekly_usage_usd, s.weekly_limit_usd, 7 * DAY, told(s.weekly_reset_at) ?? after(s.weekly_window_start, 7 * DAY)],
+      ["30 days", s.monthly_usage_usd, s.monthly_limit_usd, 30 * DAY, told(s.monthly_reset_at)],
     ]
     for (const [name, used, limit, span, resetsAt] of rows) {
       if (!(num(limit) > 0)) continue // null or 0: no limit on this window
