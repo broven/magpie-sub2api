@@ -4,6 +4,8 @@
 
 # magpie-sub2api
 
+<a href="https://github.com/broven/magpie-sub2api"><img src="https://img.shields.io/badge/Star-on%20GitHub-f5c518?style=for-the-badge&logo=github" alt="Star on GitHub" height="48"></a>
+
 Any [sub2api](https://github.com/Wei-Shaw/sub2api) site as a provider in [magpie](https://usemagpie.ai). Sign in with the site's address and an API key. magpie can then use the models of the key's group and route by how much of the key is left.
 
 - **Models**: whatever `GET /v1/models` lists for the key's group. Claude models go to `/v1/messages`, OpenAI's (`gpt-*`, `o1`/`o3`…, `codex-*`) to `/v1/responses`, and the rest to `/v1/chat/completions`.

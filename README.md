@@ -4,6 +4,8 @@
 
 # magpie-sub2api
 
+<a href="https://github.com/broven/magpie-sub2api"><img src="https://img.shields.io/badge/Star-on%20GitHub-f5c518?style=for-the-badge&logo=github" alt="Star on GitHub" height="48"></a>
+
 把任意一个 [sub2api](https://github.com/Wei-Shaw/sub2api) 站点接成 [magpie](https://usemagpie.ai) 的 provider：填站点地址和 API key 登录，magpie 就能用这个 key 所在分组的模型，并按 key 的剩余额度做路由。
 
 - **模型**：取自 `GET /v1/models`（key 所在分组列出的模型）。Claude 系列走 `/v1/messages`，OpenAI 系列（`gpt-*`、`o1`/`o3`…、`codex-*`）走 `/v1/responses`，其余走 `/v1/chat/completions`。
