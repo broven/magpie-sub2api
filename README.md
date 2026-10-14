@@ -4,7 +4,7 @@
 
 # magpie-sub2api
 
-<a href="https://github.com/broven/magpie-sub2api"><img src="https://img.shields.io/github/stars/broven/magpie-sub2api?style=for-the-badge&logo=github&label=Star&color=f5c518" alt="Star on GitHub" height="48"></a>
+<a href="https://github.com/broven/magpie-sub2api"><img src="https://img.shields.io/badge/Star-on%20GitHub-f5c518?style=for-the-badge&logo=github" alt="Star on GitHub" height="48"></a>
 
 把任意一个 [sub2api](https://github.com/Wei-Shaw/sub2api) 站点接成 [magpie](https://usemagpie.ai) 的 provider：填站点地址和 API key 登录，magpie 就能用这个 key 所在分组的模型，并按 key 的剩余额度做路由。
 
