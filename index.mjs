@@ -6,8 +6,8 @@
 // balance), as the gateway's GET /v1/usage has it.
 //
 // Only upstream sub2api's public endpoints are asked (/v1/models,
-// /v1/usage), so any sub2api site from 0.2.14 on works. Two ways to have
-// sites, both at once if you like:
+// /backend-api/codex/models, /v1/usage), so any sub2api site from 0.2.14
+// on works. Two ways to have sites, both at once if you like:
 //   - the "sub2api" provider: each sign-in is one account, its own site and
 //     its own key, so keys on several sites (or several keys on one) pool
 //     under the one provider, and magpie routes across them;
@@ -115,9 +115,20 @@ function npmOf(id) {
   return CHAT
 }
 
-function runtimeModel(m, url, providerID) {
+// LEVELS are a thinking model's reasoning levels when nothing tells them.
+const LEVELS = ["low", "medium", "high"]
+
+const variantsOf = (levels) => Object.fromEntries(levels.map((l) => [l, {}]))
+
+// runtimeModel is magpie's model. Its variants are its reasoning levels
+// (magpie offers a thinking model's variants' keys as its efforts), the
+// first of: the levels the site tells (told), the variants magpie already
+// has for the model (was: models.dev's, the config's), LEVELS when the
+// model thinks.
+function runtimeModel(m, url, providerID, told, was) {
   const npm = npmOf(m.id)
-  const reasoning = npm !== CHAT || /think|reason/i.test(m.id)
+  const kept = was?.variants && typeof was.variants === "object" && Object.keys(was.variants).length ? was.variants : undefined
+  const reasoning = !!told?.length || !!kept || npm !== CHAT || /think|reason/i.test(m.id)
   return {
     id: m.id,
     providerID,
@@ -138,19 +149,47 @@ function runtimeModel(m, url, providerID) {
       interleaved: false,
     },
     release_date: "",
-    variants: {},
+    variants: told?.length ? variantsOf(told) : (kept ?? (reasoning ? variantsOf(LEVELS) : {})),
   }
 }
 
+// efforts are each model's reasoning levels, by id, as the site's Codex
+// models manifest tells them ({models: [{slug, supported_reasoning_levels:
+// [{effort}, …] or ["low", …]}]}); the plain /v1/models never tells them.
+// The manifest is asked without a client_version, so the site asks its
+// upstream as the Codex version it keeps. Only a help: a site that can't
+// tell is no levels. sub2api lists a model it knows nothing of as ["none"]
+// alone, which tells no levels either; "none" next to others is one.
+async function efforts(base, key) {
+  let body
+  try {
+    body = await get(base, "/backend-api/codex/models", key)
+  } catch {
+    return {}
+  }
+  const out = {}
+  for (const m of Array.isArray(body?.models) ? body.models : []) {
+    if (typeof m?.slug !== "string" || !Array.isArray(m.supported_reasoning_levels)) continue
+    const levels = []
+    for (const l of m.supported_reasoning_levels) {
+      const e = typeof l === "string" ? l : l?.effort
+      if (typeof e === "string" && e.trim() && !levels.includes(e.trim())) levels.push(e.trim())
+    }
+    if (levels.some((l) => l !== "none")) out[m.slug] = levels
+  }
+  return out
+}
+
 // models is what GET /v1/models lists for the key: its group's, in
-// Anthropic's shape or OpenAI's as the group's platform has it.
-async function models(id, base, auth) {
-  const body = await get(base, "/v1/models", auth.key)
+// Anthropic's shape or OpenAI's as the group's platform has it; was is the
+// models magpie already has.
+async function models(id, base, auth, was = {}) {
+  const [body, told] = await Promise.all([get(base, "/v1/models", auth.key), efforts(base, auth.key)])
   const out = {}
   for (const m of body?.data ?? []) {
     if (typeof m?.id !== "string" || !m.id) continue
     const name = typeof m.display_name === "string" && m.display_name ? m.display_name : m.id
-    out[m.id] = runtimeModel({ id: m.id, name }, base + "/v1", id)
+    out[m.id] = runtimeModel({ id: m.id, name }, base + "/v1", id, told[m.id], was?.[m.id])
   }
   if (!Object.keys(out).length) throw new Error("/v1/models: an empty list")
   return out
@@ -349,7 +388,7 @@ function hooks(client, id, site) {
         const base = baseOf(auth)
         if (!base) return provider.models
         try {
-          return await models(id, base, auth)
+          return await models(id, base, auth, provider?.models)
         } catch (e) {
           if (e?.signIn) throw e
           return provider.models
