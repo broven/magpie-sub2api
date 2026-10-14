@@ -106,3 +106,5 @@ SUB2API_URL=https://api.example.com SUB2API_KEY=sk-... ./e2e.sh
 ## 许可证
 
 MIT
+
+插件图标是 [sub2api](https://github.com/Wei-Shaw/sub2api) 的 logo（`assets/logo.svg`），版权归 sub2api 项目所有，它的许可证是 LGPL-3.0。

@@ -106,3 +106,5 @@ For releasing, see [RELEASE.md](./RELEASE.md).
 ## License
 
 MIT
+
+The plugin's icon is the [sub2api](https://github.com/Wei-Shaw/sub2api) logo (`assets/logo.svg`), which belongs to the sub2api project and is licensed under LGPL-3.0.
