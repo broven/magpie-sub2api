@@ -7,6 +7,7 @@
 Any [sub2api](https://github.com/Wei-Shaw/sub2api) site as a provider in [magpie](https://usemagpie.ai). Sign in with the site's address and an API key. magpie can then use the models of the key's group and route by how much of the key is left.
 
 - **Models**: whatever `GET /v1/models` lists for the key's group. Claude models go to `/v1/messages`, OpenAI's (`gpt-*`, `o1`/`o3`…, `codex-*`) to `/v1/responses`, and the rest to `/v1/chat/completions`.
+- **Reasoning levels**: from the site's Codex models manifest (each model's `supported_reasoning_levels` in `GET /backend-api/codex/models`), so they can be switched in magpie and Codex. When the site tells none, the levels magpie already has for the model (its `variants` from models.dev or the config) are kept, and failing that a thinking model gets `low` / `medium` / `high`.
 - **Usage**: from `GET /v1/usage`, turned into magpie usage windows according to how the key is billed (see the table below). magpie's usage page, menu bar and router all read these windows, so once one is full magpie steers around that key.
 
 ## Why not magpie's built-in `balance=/v1/usage`
@@ -84,7 +85,7 @@ An expired subscription, a used-up key quota or an expired key shows as an error
 
 ## Compatibility
 
-sub2api **≥ 0.2.14**. The plugin calls only upstream's public endpoints (`/v1/models`, `/v1/usage`) and relies on no site's own changes. CI runs the end-to-end tests against 0.2.14 and against the latest release.
+sub2api **≥ 0.2.14**. The plugin calls only upstream's public endpoints (`/v1/models`, `/backend-api/codex/models`, `/v1/usage`) and relies on no site's own changes. CI runs the end-to-end tests against 0.2.14 and against the latest release.
 
 ## Development and tests
 

@@ -77,10 +77,37 @@ test("loader: the site's /v1 and the key, and the account is named after the sit
   assert.equal(c.sets.length, 1)
 })
 
+// the site's Codex models manifest, as the key gets it
+async function manifest(key) {
+  const res = await fetch(state.base + "/backend-api/codex/models", { headers: { authorization: `Bearer ${key}` } })
+  assert.equal(res.status, 200, "the Codex models manifest")
+  return res.json()
+}
+
+// fetch as the site answers, but for the paths in rewrites: a status to
+// fail with, or a function of the site's JSON answer
+async function withSite(rewrites, fn) {
+  const real = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    const u = new URL(String(url))
+    const r = u.origin === new URL(state.base).origin ? rewrites[u.pathname] : undefined
+    if (r === undefined) return real(url, init)
+    if (typeof r === "number") return new Response("rewritten", { status: r })
+    const res = await real(url, init)
+    return new Response(JSON.stringify(r(await res.json())), { status: res.status, headers: { "content-type": "application/json" } })
+  }
+  try {
+    return await fn()
+  } finally {
+    globalThis.fetch = real
+  }
+}
+
 test("provider.models: the key's group's models, Claude on /v1/messages", async () => {
   const provider = { id: "sub2api", models: { kept: {} } }
   const models = await hooks.provider.models(provider, { auth: signIn(state.keys.subscription) })
-  writeFileSync(join(out, "models.json"), JSON.stringify({ tag, models }, null, 2) + "\n")
+  const upstream = await manifest(state.keys.subscription)
+  writeFileSync(join(out, "models.json"), JSON.stringify({ tag, models, manifest: upstream }, null, 2) + "\n")
   const ids = Object.keys(models)
   assert.ok(ids.length > 0, "no models")
   assert.ok(ids.some((id) => id.startsWith("claude-")), "no Claude model: " + ids.join(", "))
@@ -89,11 +116,63 @@ test("provider.models: the key's group's models, Claude on /v1/messages", async 
     assert.equal(m.providerID, "sub2api")
     assert.equal(m.api.url, state.base + "/v1")
     if (id.startsWith("claude-")) assert.equal(m.api.npm, "@ai-sdk/anthropic")
+    // a thinking model has reasoning levels to pick from
+    if (m.capabilities.reasoning) assert.ok(Object.keys(m.variants).length > 0, `${id}: no variants`)
+  }
+  // the levels are the ones the site's manifest tells, in its order; a
+  // model it lists as ["none"] alone (one it knows nothing of) gets the
+  // plugin's own
+  const levels = (m) => (m.supported_reasoning_levels ?? []).map((l) => l.effort ?? l)
+  const listed = upstream.models.filter((m) => models[m.slug])
+  const told = listed.filter((m) => levels(m).some((l) => l !== "none"))
+  assert.ok(told.length > 0, "the manifest tells no model's levels")
+  for (const m of told) {
+    assert.deepEqual(Object.keys(models[m.slug].variants), levels(m), m.slug)
+    assert.equal(models[m.slug].capabilities.reasoning, true)
+  }
+  for (const m of listed.filter((m) => !told.includes(m))) {
+    assert.deepEqual(levels(m), ["none"], m.slug)
+    if (models[m.slug].capabilities.reasoning) assert.deepEqual(Object.keys(models[m.slug].variants), ["low", "medium", "high"], m.slug)
   }
   // a key the site refuses: the account is marked signed out
   await assert.rejects(hooks.provider.models(provider, { auth: signIn("sk-not-a-key-0000") }), (e) => e.signIn === "expired")
   // no key: the list magpie has stays
   assert.equal(await hooks.provider.models(provider, {}), provider.models)
+})
+
+test("provider.models: reasoning levels when the site's manifest can't tell them", async () => {
+  const auth = signIn(state.keys.subscription)
+  const told = await hooks.provider.models({ id: "sub2api", models: {} }, { auth })
+  const claude = Object.keys(told).find((id) => id.startsWith("claude-"))
+  // a model that doesn't think, listed next to the site's own
+  const plain = "plain-chat-model"
+  const listed = { "/v1/models": (b) => ({ ...b, data: [...b.data, { id: plain, display_name: "Plain" }] }) }
+  const provider = { id: "sub2api", models: { [claude]: { variants: { custom: { budget: 1 } } } } }
+
+  // the manifest fails: the list stands, the variants magpie has are kept,
+  // other thinking models get low/medium/high, a plain model none
+  const failed = await withSite({ ...listed, "/backend-api/codex/models": 500 }, () => hooks.provider.models(provider, { auth }))
+  assert.deepEqual(Object.keys(failed).sort(), [...Object.keys(told), plain].sort())
+  assert.deepEqual(failed[claude].variants, { custom: { budget: 1 } })
+  assert.equal(failed[claude].capabilities.reasoning, true)
+  for (const [id, m] of Object.entries(failed)) {
+    if (id === claude || id === plain) continue
+    assert.deepEqual(Object.keys(m.variants), ["low", "medium", "high"], id)
+  }
+  assert.equal(failed[plain].capabilities.reasoning, false)
+  assert.deepEqual(failed[plain].variants, {})
+
+  // an answer of another shape: the same
+  const garbled = await withSite({ "/backend-api/codex/models": () => "not a manifest" }, () => hooks.provider.models(provider, { auth }))
+  assert.deepEqual(garbled[claude].variants, { custom: { budget: 1 } })
+
+  // the site's levels win over the ones magpie has
+  const both = await hooks.provider.models(provider, { auth })
+  assert.deepEqual(both[claude].variants, told[claude].variants)
+
+  // levels told as plain strings are the same as {effort} objects
+  const strings = { "/backend-api/codex/models": (b) => ({ ...b, models: b.models.map((m) => ({ ...m, supported_reasoning_levels: (m.supported_reasoning_levels ?? []).map((l) => l.effort ?? l) })) }) }
+  assert.deepEqual(await withSite(strings, () => hooks.provider.models({ id: "sub2api", models: {} }, { auth })), told)
 })
 
 test("usage, subscription group: day, week and month", async () => {
