@@ -4,7 +4,7 @@
 
 # magpie-sub2api
 
-Find it useful? Give it a star → [![GitHub stars](https://img.shields.io/github/stars/broven/magpie-sub2api?style=social&label=Star)](https://github.com/broven/magpie-sub2api)
+Find it useful? Give it a star → [![GitHub stars](https://img.shields.io/github/stars/broven/magpie-sub2api?style=for-the-badge&logo=github&label=Star&color=f5c518)](https://github.com/broven/magpie-sub2api)
 
 Any [sub2api](https://github.com/Wei-Shaw/sub2api) site as a provider in [magpie](https://usemagpie.ai). Sign in with the site's address and an API key. magpie can then use the models of the key's group and route by how much of the key is left.
 
