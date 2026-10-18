@@ -21,6 +21,38 @@ const HOUR = 3600
 const DAY = 24 * HOUR
 const host = new URL(state.base).host
 
+// models.dev is never asked over the network: its api.json is answered
+// with catalogue (an excerpt of the real one, test/models-dev.json, unless
+// a test sets another), as a Response, a status to fail with, "hang" (no
+// answer until the plugin gives up), or "down" (no connection). asked
+// counts the requests.
+const FIXTURE = JSON.parse(readFileSync(join(here, "models-dev.json"), "utf8"))
+let catalogue = FIXTURE
+let asked = 0
+{
+  const real = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    if (new URL(String(url)).origin !== "https://models.dev") return real(url, init)
+    asked++
+    const c = catalogue
+    if (c === "down") throw new TypeError("fetch failed")
+    if (c === "hang") {
+      return new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal.reason)))
+    }
+    if (typeof c === "number") return new Response("down for maintenance", { status: c })
+    if (typeof c === "string") return new Response(c, { status: 200, headers: { "content-type": "text/html" } })
+    return new Response(JSON.stringify(c), { status: 200, headers: { "content-type": "application/json" } })
+  }
+}
+
+// fresh is the plugin as a magpie that has just loaded it: a module of its
+// own, so nothing of models.dev is kept yet
+let loads = 0
+async function fresh() {
+  const mod = await import(new URL(`../index.mjs?load=${++loads}`, import.meta.url))
+  return mod.Sub2apiPlugin({ client: fakeClient() })
+}
+
 // what magpie keeps for an API-key sign-in: {type, key, metadata: the prompts' answers}
 const signIn = (key) => ({ type: "api", key, metadata: { baseURL: state.base } })
 
@@ -173,6 +205,87 @@ test("provider.models: reasoning levels when the site's manifest can't tell them
   // levels told as plain strings are the same as {effort} objects
   const strings = { "/backend-api/codex/models": (b) => ({ ...b, models: b.models.map((m) => ({ ...m, supported_reasoning_levels: (m.supported_reasoning_levels ?? []).map((l) => l.effort ?? l) })) }) }
   assert.deepEqual(await withSite(strings, () => hooks.provider.models({ id: "sub2api", models: {} }, { auth })), told)
+})
+
+// the site's list with models its Codex manifest doesn't tell of: one with
+// an official models.dev entry (deepseek's), one with resellers' alone
+const OTHERS = ["deepseek-flash", "glm-4.6"]
+const withOthers = { "/v1/models": (b) => ({ ...b, data: [...b.data, ...OTHERS.map((id) => ({ id, display_name: id }))] }) }
+
+test("provider.models: models.dev's official entry when the site's manifest tells no levels", async () => {
+  const auth = signIn(state.keys.subscription)
+  const upstream = await manifest(state.keys.subscription)
+  const levels = (m) => (m.supported_reasoning_levels ?? []).map((l) => l.effort ?? l)
+  const site = await hooks.provider.models({ id: "sub2api", models: {} }, { auth })
+  const toldOne = upstream.models.find((m) => site[m.slug] && levels(m).some((l) => l !== "none"))?.slug
+  const untold = upstream.models.find((m) => site[m.slug] && !levels(m).some((l) => l !== "none"))?.slug
+  assert.ok(toldOne && untold, "the manifest has a model it tells levels for and one it doesn't")
+  // Anthropic's own entries for both, with levels of the catalogue's own
+  const entry = (id, values) => ({ id, canonical_model_id: `anthropic/${id}`, reasoning: true, reasoning_options: [{ type: "effort", values }], limit: { context: 200000, output: 64000 } })
+  catalogue = { ...FIXTURE, anthropic: { id: "anthropic", models: { [toldOne]: entry(toldOne, ["from-models-dev"]), [untold]: entry(untold, ["low", "high"]) } } }
+  try {
+    const h = await fresh()
+    const was = { [untold]: { variants: { custom: { budget: 1 } } } }
+    const before = asked
+    // magpie asks for several accounts' lists at once: models.dev is asked once
+    const [got, again] = await withSite(withOthers, () => Promise.all([h.provider.models({ id: "sub2api", models: was }, { auth }), h.provider.models({ id: "sub2api", models: was }, { auth })]))
+    assert.equal(asked - before, 1, "models.dev asked once")
+    assert.deepEqual(again, got)
+    writeFileSync(join(out, "models-dev.json"), JSON.stringify({ tag, models: Object.fromEntries([...OTHERS, toldOne, untold].map((id) => [id, got[id]])) }, null, 2) + "\n")
+
+    const ds = got["deepseek-flash"]
+    assert.equal(ds.api.npm, "@ai-sdk/openai-compatible")
+    assert.equal(ds.capabilities.reasoning, true)
+    assert.deepEqual(Object.keys(ds.variants), ["low", "high", "max"])
+    assert.deepEqual(ds.capabilities.interleaved, { field: "reasoning_content" })
+    // deepseek's own limits, not 302ai's resold entry's
+    assert.deepEqual(ds.limit, { context: 1000000, output: 393216 })
+
+    // resellers' entries alone (glm-4.6's canonical is none, or zhipuai's
+    // under aihubmix): as if models.dev had nothing to say
+    const glm = got["glm-4.6"]
+    assert.equal(glm.capabilities.reasoning, false)
+    assert.deepEqual(glm.variants, {})
+    assert.equal(glm.capabilities.interleaved, false)
+    assert.deepEqual(glm.limit, { context: 0, output: 0 })
+
+    // the site's levels win over models.dev's; models.dev's over magpie's
+    assert.deepEqual(got[toldOne].variants, site[toldOne].variants)
+    assert.deepEqual(got[toldOne].limit, { context: 200000, output: 64000 })
+    assert.deepEqual(Object.keys(got[untold].variants), ["low", "high"])
+
+    // a while later: still the one ask
+    await withSite(withOthers, () => h.provider.models({ id: "sub2api", models: {} }, { auth }))
+    assert.equal(asked - before, 1, "models.dev kept")
+  } finally {
+    catalogue = FIXTURE
+  }
+})
+
+test("provider.models: models.dev down, slow or garbled is as if it had nothing to say", async () => {
+  const auth = signIn(state.keys.subscription)
+  const list = async (c) => {
+    catalogue = c
+    try {
+      const h = await fresh()
+      const t0 = Date.now()
+      const got = await withSite(withOthers, () => h.provider.models({ id: "sub2api", models: {} }, { auth }))
+      return { got, ms: Date.now() - t0 }
+    } finally {
+      catalogue = FIXTURE
+    }
+  }
+  const { got: none } = await list({})
+  // what the plugin did before models.dev: deepseek-flash, on chat
+  // completions with no "think" in its name, doesn't think
+  assert.equal(none["deepseek-flash"].capabilities.reasoning, false)
+  assert.deepEqual(none["deepseek-flash"].variants, {})
+  for (const c of [503, "<html>not JSON</html>", ["not", "a", "catalogue"], "down", "hang"]) {
+    const { got, ms } = await list(c)
+    assert.deepEqual(got, none, JSON.stringify(c))
+    // given up well before the site's own requests would be
+    assert.ok(ms < 10_000, `${JSON.stringify(c)}: ${ms} ms`)
+  }
 })
 
 test("usage, subscription group: day, week and month", async () => {
