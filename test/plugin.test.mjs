@@ -5,8 +5,9 @@
 
 import { test, before } from "node:test"
 import assert from "node:assert/strict"
-import { readFileSync, mkdirSync, writeFileSync } from "node:fs"
+import { readFileSync, mkdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs"
 import { join, dirname } from "node:path"
+import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
 import * as plugin from "../index.mjs"
 const { Sub2apiPlugin } = plugin
@@ -45,10 +46,15 @@ let asked = 0
   }
 }
 
+// models.dev's entries are kept in a cache directory of the tests' own
+process.env.XDG_CACHE_HOME = mkdtempSync(join(tmpdir(), "mps2a-cache-"))
+
 // fresh is the plugin as a magpie that has just loaded it: a module of its
-// own, so nothing of models.dev is kept yet
+// own, with nothing of models.dev kept yet (restarted: what an earlier
+// load kept on disk stays)
 let loads = 0
-async function fresh() {
+async function fresh({ restarted = false } = {}) {
+  if (!restarted) rmSync(process.env.XDG_CACHE_HOME, { recursive: true, force: true })
   const mod = await import(new URL(`../index.mjs?load=${++loads}`, import.meta.url))
   return mod.Sub2apiPlugin({ client: fakeClient() })
 }
@@ -257,6 +263,13 @@ test("provider.models: models.dev's official entry when the site's manifest tell
     // a while later: still the one ask
     await withSite(withOthers, () => h.provider.models({ id: "sub2api", models: {} }, { auth }))
     assert.equal(asked - before, 1, "models.dev kept")
+
+    // magpie restarted (as when the plugin's options change): what was
+    // kept on disk is read, models.dev isn't asked again
+    const back = await fresh({ restarted: true })
+    const after = await withSite(withOthers, () => back.provider.models({ id: "sub2api", models: was }, { auth }))
+    assert.equal(asked - before, 1, "models.dev kept across a restart")
+    assert.deepEqual(after, got)
   } finally {
     catalogue = FIXTURE
   }

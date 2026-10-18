@@ -21,6 +21,10 @@
 // Every function this module exports is called as a plugin by magpie, so
 // only the plugins are exported.
 
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
+import { homedir } from "node:os"
+import { dirname, join } from "node:path"
+
 const ID = "sub2api"
 const SLOTS = 8
 const CHAT = "@ai-sdk/openai-compatible"
@@ -159,18 +163,49 @@ function runtimeModel(m, url, providerID, told, was, known) {
 
 // MODELS_DEV is models.dev's catalogue: {provider id: {models: {model id:
 // {reasoning, reasoning_options, interleaved, canonical_model_id, limit,
-// …}}}}, some 6 MB. It is asked once a day (KNOWN_FOR) and kept in memory,
-// every caller waiting on the one request; a failed ask is tried again
-// after KNOWN_RETRY, the last good catalogue standing meanwhile. It is
-// only a help, asked next to the site and given up sooner than the site
-// (KNOWN_TIMEOUT < TIMEOUT), so it never fails or holds up the list.
+// …}}}}, some 6 MB. It is asked once a day (KNOWN_FOR), every caller
+// waiting on the one request, and what it tells is kept on disk (keptFile),
+// not in memory, so a magpie that restarts (as it does when the plugin's
+// options change) doesn't ask again; a failed ask is tried again after
+// KNOWN_RETRY, the last good entries standing meanwhile. It is only a help,
+// asked next to the site and given up sooner than the site (KNOWN_TIMEOUT <
+// TIMEOUT), so it never fails or holds up the list.
 const MODELS_DEV = "https://models.dev/api.json"
 const KNOWN_TIMEOUT = 5_000
 const KNOWN_FOR = DAY * 1000
 const KNOWN_RETRY = 10 * 60 * 1000
 
-let known = { at: 0, ok: false, models: new Map() }
 let asking
+
+// keptFile is where models.dev's official entries are kept: the user's
+// cache directory ($XDG_CACHE_HOME, else the platform's own).
+function keptFile() {
+  const home = homedir()
+  const dir = process.env.XDG_CACHE_HOME || (process.platform === "darwin" ? join(home, "Library", "Caches") : join(home, ".cache"))
+  return join(dir, "magpie-sub2api", "models-dev.json")
+}
+
+// kept is what keptFile has: {at, ok, models: {model id: knownOf(…)}};
+// nothing yet, or a file that can't be read, is an ask long ago.
+async function kept() {
+  try {
+    const k = JSON.parse(await readFile(keptFile(), "utf8"))
+    if (Number.isFinite(k?.at) && k.models && typeof k.models === "object") return { at: k.at, ok: k.ok === true, models: k.models }
+  } catch {}
+  return { at: 0, ok: false, models: {} }
+}
+
+// keep writes k to keptFile whole (another magpie may be reading it); a
+// cache that can't be written is only asked again.
+async function keep(k) {
+  const file = keptFile()
+  try {
+    await mkdir(dirname(file), { recursive: true })
+    const tmp = `${file}.${process.pid}.tmp`
+    await writeFile(tmp, JSON.stringify(k))
+    await rename(tmp, file)
+  } catch {}
+}
 
 // knownOf is what models.dev's entry m tells of a model: whether it thinks;
 // its levels, the values of its reasoning_options of type "effort" (one
@@ -199,33 +234,36 @@ function knownOf(m) {
 // for the same id is no word on it, and a model with none is not known.
 function officialOf(body) {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("models.dev: not a catalogue")
-  const out = new Map()
+  const out = {}
   for (const [pid, p] of Object.entries(body)) {
     const models = p?.models && typeof p.models === "object" ? p.models : {}
     for (const [id, m] of Object.entries(models)) {
-      if (out.has(id) || typeof m?.canonical_model_id !== "string") continue
-      if (m.canonical_model_id.split("/")[0] === pid) out.set(id, knownOf(m))
+      if (Object.hasOwn(out, id) || typeof m?.canonical_model_id !== "string") continue
+      if (m.canonical_model_id.split("/")[0] === pid) out[id] = knownOf(m)
     }
   }
   return out
 }
 
-// knownModels is the official entries models.dev has; none when it can't
-// be asked.
+// knownModels is the official entries models.dev has, by model id; none
+// when it can't be asked.
 async function knownModels() {
-  if (Date.now() - known.at < (known.ok ? KNOWN_FOR : KNOWN_RETRY)) return known.models
+  const k = await kept()
+  if (Date.now() - k.at < (k.ok ? KNOWN_FOR : KNOWN_RETRY)) return new Map(Object.entries(k.models))
   asking ??= (async () => {
+    let next
     try {
       const res = await fetch(MODELS_DEV, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(KNOWN_TIMEOUT) })
       if (!res.ok) throw new Error(`models.dev: ${res.status}`)
-      known = { at: Date.now(), ok: true, models: officialOf(await res.json()) }
+      next = { at: Date.now(), ok: true, models: officialOf(await res.json()) }
     } catch {
-      known = { ...known, at: Date.now(), ok: false }
-    } finally {
-      asking = undefined
+      next = { ...k, at: Date.now(), ok: false }
     }
-    return known.models
-  })()
+    await keep(next)
+    return new Map(Object.entries(next.models))
+  })().finally(() => {
+    asking = undefined
+  })
   return asking
 }
 
