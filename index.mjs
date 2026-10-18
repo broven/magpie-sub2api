@@ -21,6 +21,10 @@
 // Every function this module exports is called as a plugin by magpie, so
 // only the plugins are exported.
 
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
+import { homedir } from "node:os"
+import { dirname, join } from "node:path"
+
 const ID = "sub2api"
 const SLOTS = 8
 const CHAT = "@ai-sdk/openai-compatible"
@@ -120,15 +124,19 @@ const LEVELS = ["low", "medium", "high"]
 
 const variantsOf = (levels) => Object.fromEntries(levels.map((l) => [l, {}]))
 
-// runtimeModel is magpie's model. Its variants are its reasoning levels
-// (magpie offers a thinking model's variants' keys as its efforts), the
-// first of: the levels the site tells (told), the variants magpie already
-// has for the model (was: models.dev's, the config's), LEVELS when the
-// model thinks.
-function runtimeModel(m, url, providerID, told, was) {
+// runtimeModel is magpie's model. Whether it thinks, and its variants (its
+// reasoning levels: magpie offers a thinking model's variants' keys as its
+// efforts), are the first to tell of: the levels the site tells (told),
+// the model's official models.dev entry (known), the variants magpie
+// already has for the model (was: models.dev's, the config's), the
+// endpoint and the name. A thinking model nothing gives levels for gets
+// LEVELS. Whether it wants its thinking passed back (interleaved) and its
+// limits are known's alone.
+function runtimeModel(m, url, providerID, told, was, known) {
   const npm = npmOf(m.id)
   const kept = was?.variants && typeof was.variants === "object" && Object.keys(was.variants).length ? was.variants : undefined
-  const reasoning = !!told?.length || !!kept || npm !== CHAT || /think|reason/i.test(m.id)
+  const reasoning = told?.length ? true : known ? known.reasoning : !!kept || npm !== CHAT || /think|reason/i.test(m.id)
+  const levels = told?.length ? told : known?.levels.length ? known.levels : undefined
   return {
     id: m.id,
     providerID,
@@ -138,7 +146,7 @@ function runtimeModel(m, url, providerID, told, was) {
     headers: {},
     options: {},
     cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
-    limit: { context: 0, output: 0 },
+    limit: known ? { ...known.limit } : { context: 0, output: 0 },
     capabilities: {
       temperature: true,
       reasoning,
@@ -146,11 +154,117 @@ function runtimeModel(m, url, providerID, told, was) {
       toolcall: true,
       input: { text: true, image: npm !== CHAT, audio: false, video: false, pdf: false },
       output: { text: true, image: false, audio: false, video: false, pdf: false },
-      interleaved: false,
+      interleaved: typeof known?.interleaved === "object" ? { ...known.interleaved } : (known?.interleaved ?? false),
     },
     release_date: "",
-    variants: told?.length ? variantsOf(told) : (kept ?? (reasoning ? variantsOf(LEVELS) : {})),
+    variants: !reasoning ? {} : levels ? variantsOf(levels) : known ? variantsOf(LEVELS) : (kept ?? variantsOf(LEVELS)),
   }
+}
+
+// MODELS_DEV is models.dev's catalogue: {provider id: {models: {model id:
+// {reasoning, reasoning_options, interleaved, canonical_model_id, limit,
+// …}}}}, some 6 MB. It is asked once a day (KNOWN_FOR), every caller
+// waiting on the one request, and what it tells is kept on disk (keptFile),
+// not in memory, so a magpie that restarts (as it does when the plugin's
+// options change) doesn't ask again; a failed ask is tried again after
+// KNOWN_RETRY, the last good entries standing meanwhile. It is only a help,
+// asked next to the site and given up sooner than the site (KNOWN_TIMEOUT <
+// TIMEOUT), so it never fails or holds up the list.
+const MODELS_DEV = "https://models.dev/api.json"
+const KNOWN_TIMEOUT = 5_000
+const KNOWN_FOR = DAY * 1000
+const KNOWN_RETRY = 10 * 60 * 1000
+
+let asking
+
+// keptFile is where models.dev's official entries are kept: the user's
+// cache directory ($XDG_CACHE_HOME, else the platform's own).
+function keptFile() {
+  const home = homedir()
+  const dir = process.env.XDG_CACHE_HOME || (process.platform === "darwin" ? join(home, "Library", "Caches") : join(home, ".cache"))
+  return join(dir, "magpie-sub2api", "models-dev.json")
+}
+
+// kept is what keptFile has: {at, ok, models: {model id: knownOf(…)}};
+// nothing yet, or a file that can't be read, is an ask long ago.
+async function kept() {
+  try {
+    const k = JSON.parse(await readFile(keptFile(), "utf8"))
+    if (Number.isFinite(k?.at) && k.models && typeof k.models === "object") return { at: k.at, ok: k.ok === true, models: k.models }
+  } catch {}
+  return { at: 0, ok: false, models: {} }
+}
+
+// keep writes k to keptFile whole (another magpie may be reading it); a
+// cache that can't be written is only asked again.
+async function keep(k) {
+  const file = keptFile()
+  try {
+    await mkdir(dirname(file), { recursive: true })
+    const tmp = `${file}.${process.pid}.tmp`
+    await writeFile(tmp, JSON.stringify(k))
+    await rename(tmp, file)
+  } catch {}
+}
+
+// knownOf is what models.dev's entry m tells of a model: whether it thinks;
+// its levels, the values of its reasoning_options of type "effort" (one
+// that thinks by a toggle or a budget_tokens alone tells none); its
+// interleaved ({field: "reasoning_content"}: its thinking goes back in that
+// field), and its limits.
+function knownOf(m) {
+  const levels = []
+  for (const o of Array.isArray(m.reasoning_options) ? m.reasoning_options : []) {
+    if (o?.type !== "effort" || !Array.isArray(o.values)) continue
+    for (const v of o.values) if (typeof v === "string" && v.trim() && !levels.includes(v.trim())) levels.push(v.trim())
+  }
+  const il = m.interleaved
+  const size = (v) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0)
+  return {
+    reasoning: m.reasoning === true,
+    levels,
+    interleaved: il === true ? true : typeof il?.field === "string" && il.field ? { field: il.field } : false,
+    limit: { context: size(m.limit?.context), output: size(m.limit?.output) },
+  }
+}
+
+// officialOf is the catalogue's official entries, by model id: a model is
+// known only by the entry under the provider its canonical_model_id is of
+// (deepseek's deepseek-flash, canonical "deepseek/…"). A reseller's entry
+// for the same id is no word on it, and a model with none is not known.
+function officialOf(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("models.dev: not a catalogue")
+  const out = {}
+  for (const [pid, p] of Object.entries(body)) {
+    const models = p?.models && typeof p.models === "object" ? p.models : {}
+    for (const [id, m] of Object.entries(models)) {
+      if (Object.hasOwn(out, id) || typeof m?.canonical_model_id !== "string") continue
+      if (m.canonical_model_id.split("/")[0] === pid) out[id] = knownOf(m)
+    }
+  }
+  return out
+}
+
+// knownModels is the official entries models.dev has, by model id; none
+// when it can't be asked.
+async function knownModels() {
+  const k = await kept()
+  if (Date.now() - k.at < (k.ok ? KNOWN_FOR : KNOWN_RETRY)) return new Map(Object.entries(k.models))
+  asking ??= (async () => {
+    let next
+    try {
+      const res = await fetch(MODELS_DEV, { headers: { Accept: "application/json" }, signal: AbortSignal.timeout(KNOWN_TIMEOUT) })
+      if (!res.ok) throw new Error(`models.dev: ${res.status}`)
+      next = { at: Date.now(), ok: true, models: officialOf(await res.json()) }
+    } catch {
+      next = { ...k, at: Date.now(), ok: false }
+    }
+    await keep(next)
+    return new Map(Object.entries(next.models))
+  })().finally(() => {
+    asking = undefined
+  })
+  return asking
 }
 
 // efforts are each model's reasoning levels, by id, as the site's Codex
@@ -182,14 +296,15 @@ async function efforts(base, key) {
 
 // models is what GET /v1/models lists for the key: its group's, in
 // Anthropic's shape or OpenAI's as the group's platform has it; was is the
-// models magpie already has.
+// models magpie already has. The site's manifest and models.dev are asked
+// at the same time.
 async function models(id, base, auth, was = {}) {
-  const [body, told] = await Promise.all([get(base, "/v1/models", auth.key), efforts(base, auth.key)])
+  const [body, told, official] = await Promise.all([get(base, "/v1/models", auth.key), efforts(base, auth.key), knownModels()])
   const out = {}
   for (const m of body?.data ?? []) {
     if (typeof m?.id !== "string" || !m.id) continue
     const name = typeof m.display_name === "string" && m.display_name ? m.display_name : m.id
-    out[m.id] = runtimeModel({ id: m.id, name }, base + "/v1", id, told[m.id], was?.[m.id])
+    out[m.id] = runtimeModel({ id: m.id, name }, base + "/v1", id, told[m.id], was?.[m.id], official.get(m.id))
   }
   if (!Object.keys(out).length) throw new Error("/v1/models: an empty list")
   return out
